@@ -11,7 +11,150 @@
 // https://github.com/ImpulseAdventure/GUIslice
 //
 //<App !End!>
+// (Updated code as shown earlier with simplified heater and pump change logic)
 
+#include <max6675.h>
+#include <SPI.h>
+#include <EEPROM.h>
+//<App !Start!>
+// FILE: [gui.ino]
+// Created by GUIslice Builder version: [0.17.b40]
+//
+// GUIslice Builder Generated File
+//
+// For the latest guides, updates and support view:
+// https://github.com/ImpulseAdventure/GUIslice
+//
+//<App !End!>
+
+// ------------------------------------------------
+// Headers to include
+// ------------------------------------------------
+#include "gui_GSLC.h"
+#include "GUIslice.h"
+#include "GUIslice_drv.h"
+
+
+// --- Pin Definitions ---
+const int heaterControlPin = 46;
+const int pumpControlPin = 44;
+const int thermocoupleDO = 50;   // MISO
+const int thermocoupleCS = 48;   // CS
+const int thermocoupleCLK = 52;  // SCK
+
+// --- EEPROM Addresses ---
+#define EEPROM_PUMP_START 0
+#define EEPROM_PUMP_STOP 2
+#define EEPROM_HEATER_STOP 4
+#define EEPROM_RUNTIME_1 6
+#define EEPROM_RUNTIME_2 10 // +4 bytes
+#define EEPROM_RUNTIME_3 14 // +4 bytes
+#define EEPROM_RUNTIME_4 18 // +4 bytes
+#define EEPROM_RUNTIME_5 22 // +4 bytes
+#define EEPROM_RUNTIME_COUNT 26 // To store how many runtimes have been recorded
+
+// --- Setpoint Variables ---
+int pumpStartSetpoint;
+int pumpStopSetpoint;
+int heaterStopSetpoint;
+
+// --- Hysteresis ---
+const float pumpStartHysteresis = 2.0;
+
+// Other existing variables and headers remain the same as your original file...
+
+// Function to set the heater state (ON/OFF)
+void setHeaterState(bool state) {
+    heaterIsOn = state;
+    digitalWrite(heaterControlPin, state ? HIGH : LOW);
+    if (m_heattog != NULL) {
+        gslc_ElemXTogglebtnSetState(&m_gui, m_heattog, state);
+    }
+    if (enableDebugSerial) {
+        Serial.print("Heater is now ");
+        Serial.println(state ? "ON" : "OFF");
+    }
+}
+
+// Function to set the pump state (ON/OFF)
+void setPumpState(bool state) {
+    pumpIsOn = state;
+    digitalWrite(pumpControlPin, state ? HIGH : LOW);
+    if (m_pumptog != NULL) {
+        gslc_ElemXTogglebtnSetState(&m_gui, m_pumptog, state);
+    }
+    if (enableDebugSerial) {
+        Serial.print("Pump is now ");
+        Serial.println(state ? "ON" : "OFF");
+    }
+}
+
+// Function to handle automatic heater control
+void handleHeaterControl() {
+    if (processStarted && heaterIsOn) {
+        if (currentTemperature >= heaterStopSetpoint) {
+            setHeaterState(false);
+            timerIsRunning = false; // Stop the timer when heating finishes
+            saveRuntime(); // Save the runtime when the heater turns off
+        }
+    } else if (processStarted && !heaterIsOn && currentTemperature < heaterStopSetpoint) {
+        setHeaterState(true);
+    }
+}
+
+// Function to handle automatic pump control
+void handlePumpControl() {
+    if (processStarted) {
+        if (!pumpIsOn && currentTemperature > pumpStartSetpoint) {
+            setPumpState(true);
+            pumpHasBeenOnOnce = true;
+        } else if (pumpIsOn && currentTemperature < pumpStopSetpoint) {
+            setPumpState(false);
+        }
+    } else {
+        setPumpState(false); // Ensure pump is off when the process is not running
+        pumpHasBeenOnOnce = false;
+    }
+}
+
+// Function to save runtime to EEPROM
+void saveRuntime() {
+    unsigned long elapsedTime = millis() - processStartTime;
+    int saveAddress;
+    switch (runtimeSaveIndex) {
+        case 0: saveAddress = EEPROM_RUNTIME_1; break;
+        case 1: saveAddress = EEPROM_RUNTIME_2; break;
+        case 2: saveAddress = EEPROM_RUNTIME_3; break;
+        case 3: saveAddress = EEPROM_RUNTIME_4; break;
+        case 4: saveAddress = EEPROM_RUNTIME_5; break;
+    }
+    EEPROM_writeULong(saveAddress, elapsedTime);
+
+    if (runtimeRecordCount < 5) {
+        runtimeRecordCount++;
+        EEPROM.write(EEPROM_RUNTIME_COUNT, runtimeRecordCount);
+    }
+    runtimeSaveIndex = (runtimeSaveIndex + 1) % 5; // Cycle through the save slots
+
+    if (enableDebugSerial) {
+        unsigned long hours = (elapsedTime / (1000UL * 60 * 60));
+        unsigned long minutes = (elapsedTime / (1000UL * 60)) % 60;
+        unsigned long seconds = (elapsedTime / 1000) % 60;
+        Serial.printf("Runtime saved: %lu:%02lu:%02lu\n", hours, minutes, seconds);
+    }
+}
+
+// Main loop
+void loop() {
+    // Handle heater and pump logic
+    handleHeaterControl();
+    handlePumpControl();
+
+    // Other existing operations
+    gslc_Update(&m_gui);
+    updateTimersAndUI();
+    handleSerialCommands();
+}
 // ------------------------------------------------
 // Headers to include
 // ------------------------------------------------
